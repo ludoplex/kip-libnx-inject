@@ -6,12 +6,7 @@ context.arch = 'aarch64'
 
 APPLY_CUSTOM_TEXT = True
 
-TEXT_OFFSET = 0x100000
-
-if not APPLY_CUSTOM_TEXT:
-    TEXT_OFFSET = 0
-
-
+TEXT_OFFSET = 0 if not APPLY_CUSTOM_TEXT else 0x100000
 # secmon_panic:
 # needs exo patched to call the panic call for the amos extension instead of the iram stuff and fullsvcperm enabled in hekate
 # results in switch rebooting instantly (into rcm if autorcm is enabled) when called
@@ -58,43 +53,40 @@ if len(custom_text) != TEXT_OFFSET and APPLY_CUSTOM_TEXT:
     exit(-1)
 
 
-f = open(argv[1], "rb")
-
-header_start = f.read(0x20)
-
-
-section_names = [".text", ".rodata", ".data", ".bss"]
-
-sections = []
-for i in range(6):
-    section_bytes = f.read(0x10)
-    section = {}
-
-    if i < len(section_names):
-        section["Name"] = section_names[i]
-
-    section["OutOffset"], section["DecompressedSize"], section["CompressedSize"], section["Attribute"] = unpack(
-        "IIII", section_bytes)
-    sections.append(section)
-    print(section)
-
-kernel_caps = []
-for i in range(0x20):
-    val, = unpack("I", f.read(4))
-    kernel_caps.append(val)
+with open(argv[1], "rb") as f:
+    header_start = f.read(0x20)
 
 
-for i in range(6):
-    section = sections[i]
-    section["Buffer"] = f.read(section["CompressedSize"])
-    if APPLY_CUSTOM_TEXT:
-        if i == 0:
-            section["CompressedSize"] += TEXT_OFFSET
-            section["DecompressedSize"] += TEXT_OFFSET
-        elif i <= 3:
-            section["OutOffset"] += TEXT_OFFSET
+    section_names = [".text", ".rodata", ".data", ".bss"]
 
-f.close()
+    sections = []
+    for i in range(6):
+        section_bytes = f.read(0x10)
+        section = {}
+
+        if i < len(section_names):
+            section["Name"] = section_names[i]
+
+        section["OutOffset"], section["DecompressedSize"], section["CompressedSize"], section["Attribute"] = unpack(
+            "IIII", section_bytes)
+        sections.append(section)
+        print(section)
+
+    kernel_caps = []
+    for i in range(0x20):
+        val, = unpack("I", f.read(4))
+        kernel_caps.append(val)
+
+
+    for i in range(6):
+        section = sections[i]
+        section["Buffer"] = f.read(section["CompressedSize"])
+        if APPLY_CUSTOM_TEXT:
+            if i == 0:
+                section["CompressedSize"] += TEXT_OFFSET
+                section["DecompressedSize"] += TEXT_OFFSET
+            elif i <= 3:
+                section["OutOffset"] += TEXT_OFFSET
 
 if APPLY_CUSTOM_TEXT:
     sections[0]["Buffer"] = custom_text + sections[0]["Buffer"]
@@ -110,19 +102,16 @@ for instr, offset in patches:
     sections[0]["Buffer"] = out_buf
 
 
-f = open(argv[2], "wb")
+with open(argv[2], "wb") as f:
+    f.write(header_start)
 
-f.write(header_start)
+    for section in sections:
+        section_header = pack(
+            "IIII", section["OutOffset"], section["DecompressedSize"], section["CompressedSize"], section["Attribute"])
+        f.write(section_header)
 
-for section in sections:
-    section_header = pack(
-        "IIII", section["OutOffset"], section["DecompressedSize"], section["CompressedSize"], section["Attribute"])
-    f.write(section_header)
+    for i in range(0x20):
+        f.write(pack("I", kernel_caps[i]))
 
-for i in range(0x20):
-    f.write(pack("I", kernel_caps[i]))
-
-for section in sections:
-    f.write(section["Buffer"])
-
-f.close()
+    for section in sections:
+        f.write(section["Buffer"])
